@@ -15,6 +15,9 @@ export type AnalyzePayload = {
   merchant?: string;
   userId?: string;
   proofs?: ProofFileMeta[];
+  ocrText?: string;
+  ocrConfidence?: number;
+  ocrMatchedFields?: string[];
 };
 
 export type ProofInsights = {
@@ -30,9 +33,14 @@ export type FraudResponse = {
   reasons: string[];
   zScore: number;
   proofInsights?: ProofInsights;
+  ocrInsights?: {
+    confidence?: number;
+    matchedFields: string[];
+    notes: string[];
+  };
 };
 
-export type TransactionRecord = Omit<AnalyzePayload, "proofs"> &
+export type TransactionRecord = Omit<AnalyzePayload, "proofs" | "ocrText"> &
   FraudResponse & {
     id: string;
     createdAt: string;

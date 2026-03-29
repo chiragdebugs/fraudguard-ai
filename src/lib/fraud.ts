@@ -90,6 +90,66 @@ function analyzeProofs(proofs: ProofFileMeta[] | undefined) {
   return { riskDelta, confidenceDelta, trustScore, notes };
 }
 
+function analyzeOcr(payload: AnalyzePayload) {
+  const notes: string[] = [];
+  const matchedFields = payload.ocrMatchedFields || [];
+  let riskDelta = 0;
+  let confidenceDelta = 0;
+
+  if (!payload.ocrText) {
+    if ((payload.proofs?.length || 0) > 0) {
+      notes.push("OCR unavailable for attached files; fallback scoring applied.");
+      confidenceDelta -= 2;
+    }
+    return { notes, matchedFields, riskDelta, confidenceDelta, confidence: payload.ocrConfidence };
+  }
+
+  const normalized = payload.ocrText.toLowerCase();
+  const amountPatterns = [
+    String(Math.round(payload.amount)),
+    payload.amount.toFixed(2),
+    payload.amount.toLocaleString("en-US"),
+    payload.amount.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+  ];
+
+  const amountMatched = amountPatterns.some((p) => normalized.includes(p.toLowerCase()));
+  const merchantMatched = payload.merchant
+    ? normalized.includes(payload.merchant.toLowerCase().trim())
+    : false;
+
+  if (amountMatched && !matchedFields.includes("amount")) matchedFields.push("amount");
+  if (merchantMatched && !matchedFields.includes("merchant")) matchedFields.push("merchant");
+
+  if (amountMatched) {
+    notes.push("OCR cross-check: transaction amount found in uploaded proof text.");
+    riskDelta -= 6;
+    confidenceDelta += 4;
+  } else {
+    notes.push("OCR mismatch: amount not clearly found in uploaded proof.");
+    riskDelta += 11;
+  }
+
+  if (payload.merchant) {
+    if (merchantMatched) {
+      notes.push("OCR cross-check: merchant matched proof document.");
+      riskDelta -= 5;
+      confidenceDelta += 3;
+    } else {
+      notes.push("OCR mismatch: merchant name absent from extracted proof text.");
+      riskDelta += 9;
+    }
+  }
+
+  const ocrConfidence = payload.ocrConfidence ?? 0;
+  if (ocrConfidence > 80) confidenceDelta += 2;
+  if (ocrConfidence < 55) {
+    notes.push("OCR confidence is low; verify screenshot quality.");
+    riskDelta += 3;
+  }
+
+  return { notes, matchedFields, riskDelta, confidenceDelta, confidence: payload.ocrConfidence };
+}
+
 export function analyzeFraud(payload: AnalyzePayload): FraudResponse {
   const reasons: string[] = [];
   let risk = 8;
@@ -148,8 +208,9 @@ export function analyzeFraud(payload: AnalyzePayload): FraudResponse {
   if (reasons.length === 0) reasons.push("Pattern aligns with historical normal behavior");
 
   const proofLayer = analyzeProofs(payload.proofs);
-  const mergedRisk = clamp(normalizedRisk + proofLayer.riskDelta, 1, 99);
-  const mergedConfidence = clamp(confidence + proofLayer.confidenceDelta, 50, 99);
+  const ocrLayer = analyzeOcr(payload);
+  const mergedRisk = clamp(normalizedRisk + proofLayer.riskDelta + ocrLayer.riskDelta, 1, 99);
+  const mergedConfidence = clamp(confidence + proofLayer.confidenceDelta + ocrLayer.confidenceDelta, 50, 99);
   const mergedFraud = mergedRisk >= 65;
 
   const proofInsights = {
@@ -158,7 +219,7 @@ export function analyzeFraud(payload: AnalyzePayload): FraudResponse {
     notes: proofLayer.notes,
   };
 
-  const mergedReasons = [...reasons, ...proofLayer.notes];
+  const mergedReasons = [...reasons, ...proofLayer.notes, ...ocrLayer.notes];
 
   return {
     fraud: mergedFraud,
@@ -167,5 +228,10 @@ export function analyzeFraud(payload: AnalyzePayload): FraudResponse {
     reasons: mergedReasons,
     zScore: Number(zScore.toFixed(2)),
     proofInsights,
+    ocrInsights: {
+      confidence: ocrLayer.confidence,
+      matchedFields: ocrLayer.matchedFields,
+      notes: ocrLayer.notes,
+    },
   };
 }

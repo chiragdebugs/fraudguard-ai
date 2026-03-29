@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { filesToProofMeta, MAX_BYTES, MAX_FILES } from "@/lib/proof-client";
 import { cn } from "@/lib/utils";
+import { extractOcrFromFile } from "@/lib/ocr-client";
 
 export default function AnalyzerPage() {
   const { analyze } = usePlatform();
@@ -16,6 +17,7 @@ export default function AnalyzerPage() {
   const [result, setResult] = useState<TransactionRecord | null>(null);
   const [files, setFiles] = useState<File[]>([]);
   const [dragOver, setDragOver] = useState(false);
+  const [ocrStatus, setOcrStatus] = useState<string>("");
   const [form, setForm] = useState({
     amount: "240",
     location: "New York",
@@ -109,6 +111,7 @@ export default function AnalyzerPage() {
                 ))}
               </ul>
             )}
+            {ocrStatus && <p className="mt-2 text-xs text-slate-400">{ocrStatus}</p>}
           </div>
 
           <Button
@@ -117,6 +120,14 @@ export default function AnalyzerPage() {
               setLoading(true);
               try {
                 const proofs = files.length ? await filesToProofMeta(files) : undefined;
+                const firstImage = files.find((f) => f.type.startsWith("image/"));
+                setOcrStatus(firstImage ? "Running OCR on uploaded proof..." : "No image proof for OCR.");
+                const ocr = firstImage ? await extractOcrFromFile(firstImage) : null;
+                if (ocr?.text) {
+                  setOcrStatus(`OCR complete (${ocr.confidence}% confidence).`);
+                } else if (firstImage) {
+                  setOcrStatus("OCR could not read text from image.");
+                }
                 const out = await analyze({
                   amount: Number(form.amount),
                   location: form.location,
@@ -124,6 +135,9 @@ export default function AnalyzerPage() {
                   time: form.time,
                   merchant: form.merchant || undefined,
                   proofs,
+                  ocrText: ocr?.text,
+                  ocrConfidence: ocr?.confidence,
+                  ocrMatchedFields: ocr?.matchedFields,
                 });
                 setResult(out);
               } finally {
@@ -190,6 +204,25 @@ export default function AnalyzerPage() {
                   />
                 </div>
                 <p className="mt-2 text-xs text-slate-400">{result.proofInsights.trustScore}/100</p>
+              </div>
+            )}
+            {result.ocrInsights && (
+              <div className="rounded-xl border border-cyan-400/20 bg-cyan-500/10 p-4">
+                <p className="mb-2 text-xs font-medium uppercase tracking-wide text-cyan-200/90">
+                  OCR cross-check
+                </p>
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-slate-300">OCR confidence</span>
+                  <span className="font-semibold text-white">{result.ocrInsights.confidence ?? 0}%</span>
+                </div>
+                <div className="mt-2 flex items-center justify-between text-sm">
+                  <span className="text-slate-300">Matched fields</span>
+                  <span className="font-semibold text-white">
+                    {result.ocrInsights.matchedFields.length
+                      ? result.ocrInsights.matchedFields.join(", ")
+                      : "none"}
+                  </span>
+                </div>
               </div>
             )}
 
