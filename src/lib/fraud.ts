@@ -1,4 +1,4 @@
-import { AnalyzePayload, FraudResponse } from "@/types";
+import { AnalyzePayload, FraudResponse, ProofFileMeta } from "@/types";
 
 const profile = {
   avgSpend: 275,
@@ -12,6 +12,83 @@ const profile = {
 const txTimestamps = new Map<string, number[]>();
 
 const clamp = (n: number, min: number, max: number) => Math.min(max, Math.max(min, n));
+
+const SUSPICIOUS_NAME = /fake|forg|photoshop|copy\s*\(|edited|screenshot\s*copy|test\s*receipt|sample\.png/i;
+
+function analyzeProofs(proofs: ProofFileMeta[] | undefined) {
+  const notes: string[] = [];
+  let riskDelta = 0;
+  let confidenceDelta = 0;
+  let trustAccumulator = 50;
+
+  if (!proofs || proofs.length === 0) {
+    notes.push("No documentary proof attached — scoring uses behavioral signals only.");
+    return {
+      riskDelta: 0,
+      confidenceDelta: -4,
+      trustScore: 40,
+      notes,
+    };
+  }
+
+  notes.push(`${proofs.length} proof file(s) registered with integrity hashes for audit trail.`);
+  trustAccumulator += 12;
+  confidenceDelta += 6;
+
+  const hashes = new Set<string>();
+  for (const p of proofs) {
+    if (hashes.has(p.sha256)) {
+      riskDelta += 10;
+      notes.push("Duplicate file hash detected — possible repeated upload.");
+    }
+    hashes.add(p.sha256);
+
+    if (SUSPICIOUS_NAME.test(p.name)) {
+      riskDelta += 14;
+      notes.push(`Filename signal: "${p.name}" matches common tampering patterns.`);
+    }
+
+    if (p.sizeBytes < 2500) {
+      riskDelta += 8;
+      notes.push(`"${p.name}" is unusually small — verify it is a complete capture.`);
+    } else {
+      trustAccumulator += 4;
+    }
+
+    const allowed = /^image\/(jpeg|png|webp)$|^application\/pdf$/i;
+    if (!allowed.test(p.mimeType)) {
+      riskDelta += 9;
+      notes.push(`Unexpected MIME type (${p.mimeType}) — expected receipt image or PDF.`);
+    } else {
+      trustAccumulator += 5;
+    }
+
+    if (p.imageWidth && p.imageHeight) {
+      const { imageWidth: w, imageHeight: h } = p;
+      const mobilePortrait = h > w && w >= 360 && w <= 480;
+      const desktop = w >= 1024;
+      if (mobilePortrait) {
+        notes.push("Image dimensions resemble a mobile banking screenshot (portrait).");
+        trustAccumulator += 6;
+        riskDelta -= 4;
+      } else if (desktop) {
+        notes.push("Image dimensions resemble a desktop statement capture.");
+        trustAccumulator += 4;
+      }
+    }
+  }
+
+  const mimeTypes = new Set(proofs.map((p) => p.mimeType));
+  if (mimeTypes.has("application/pdf") && [...mimeTypes].some((m) => m.startsWith("image/"))) {
+    notes.push("Mixed PDF + image proof pack — stronger corroboration.");
+    trustAccumulator += 8;
+    confidenceDelta += 4;
+    riskDelta -= 3;
+  }
+
+  const trustScore = clamp(Math.round(trustAccumulator), 0, 100);
+  return { riskDelta, confidenceDelta, trustScore, notes };
+}
 
 export function analyzeFraud(payload: AnalyzePayload): FraudResponse {
   const reasons: string[] = [];
@@ -70,11 +147,25 @@ export function analyzeFraud(payload: AnalyzePayload): FraudResponse {
 
   if (reasons.length === 0) reasons.push("Pattern aligns with historical normal behavior");
 
+  const proofLayer = analyzeProofs(payload.proofs);
+  const mergedRisk = clamp(normalizedRisk + proofLayer.riskDelta, 1, 99);
+  const mergedConfidence = clamp(confidence + proofLayer.confidenceDelta, 50, 99);
+  const mergedFraud = mergedRisk >= 65;
+
+  const proofInsights = {
+    filesAnalyzed: payload.proofs?.length ?? 0,
+    trustScore: proofLayer.trustScore,
+    notes: proofLayer.notes,
+  };
+
+  const mergedReasons = [...reasons, ...proofLayer.notes];
+
   return {
-    fraud,
-    risk: normalizedRisk,
-    confidence,
-    reasons,
+    fraud: mergedFraud,
+    risk: mergedRisk,
+    confidence: mergedConfidence,
+    reasons: mergedReasons,
     zScore: Number(zScore.toFixed(2)),
+    proofInsights,
   };
 }

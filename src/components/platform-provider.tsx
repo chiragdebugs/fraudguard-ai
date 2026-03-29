@@ -30,6 +30,7 @@ const seed: TransactionRecord[] = [
     confidence: 77,
     reasons: ["Pattern aligns with historical normal behavior"],
     zScore: -0.61,
+    proofFileCount: 1,
     createdAt: new Date(Date.now() - 3600000).toISOString(),
   },
   {
@@ -44,6 +45,7 @@ const seed: TransactionRecord[] = [
     confidence: 95,
     reasons: ["Amount anomaly detected", "Device anomaly", "Location anomaly"],
     zScore: 14.04,
+    proofFileCount: 0,
     createdAt: new Date(Date.now() - 1800000).toISOString(),
   },
 ];
@@ -67,20 +69,22 @@ export function PlatformProvider({ children }: { children: React.ReactNode }) {
   };
 
   const analyze = async (payload: AnalyzePayload) => {
+    const { proofs, ...rest } = payload;
     const response = await fetch("/api/analyze", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...payload, userId: userEmail || "demo-user" }),
+      body: JSON.stringify({ ...rest, proofs, userId: userEmail || "demo-user" }),
     });
     if (!response.ok) {
       throw new Error("Analysis failed");
     }
     const result = (await response.json()) as FraudResponse;
     const item: TransactionRecord = {
-      ...payload,
+      ...rest,
       ...result,
       id: crypto.randomUUID(),
       createdAt: new Date().toISOString(),
+      proofFileCount: proofs?.length ?? 0,
     };
     setTransactions((prev) => [item, ...prev].slice(0, 100));
     return item;

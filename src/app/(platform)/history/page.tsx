@@ -37,6 +37,7 @@ export default function HistoryPage() {
               <th className="p-3">Amount</th>
               <th className="p-3">Location</th>
               <th className="p-3">Device</th>
+              <th className="p-3">Proofs</th>
               <th className="p-3">Risk</th>
               <th className="p-3">Status</th>
             </tr>
@@ -47,6 +48,7 @@ export default function HistoryPage() {
                 <td className="p-3">${t.amount}</td>
                 <td className="p-3">{t.location}</td>
                 <td className="p-3">{t.device}</td>
+                <td className="p-3">{t.proofFileCount ?? 0}</td>
                 <td className="p-3">{t.risk}</td>
                 <td className={`p-3 ${t.fraud ? "text-red-300" : "text-emerald-300"}`}>
                   {t.fraud ? "Fraud" : "Safe"}
