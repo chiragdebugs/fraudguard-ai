@@ -1,12 +1,13 @@
 "use client";
 
 import { createContext, useContext, useEffect, useState } from "react";
-import { AnalyzePayload, FraudResponse, TransactionRecord } from "@/types";
+import { AnalyzePayload, FraudResponse, ManualTransactionInput, TransactionRecord } from "@/types";
 
 type PlatformContextType = {
   isAuthenticated: boolean;
   userEmail: string;
-  transactions: TransactionRecord[];
+  feedTransactions: TransactionRecord[];
+  historyTransactions: TransactionRecord[];
   aiStrictness: number;
   setAiStrictness: (n: number) => void;
   streamState: "idle" | "connecting" | "live" | "error";
@@ -14,70 +15,86 @@ type PlatformContextType = {
   login: (email: string, password: string) => boolean;
   logout: () => void;
   analyze: (payload: AnalyzePayload) => Promise<TransactionRecord>;
-  ingestStreamTransaction: (t: TransactionRecord) => void;
+  submitManualTransaction: (input: ManualTransactionInput) => Promise<TransactionRecord>;
   updateTransactionStatus: (txId: string, status: TransactionRecord["status"]) => void;
   filter: "all" | "fraud" | "safe";
   setFilter: (f: "all" | "fraud" | "safe") => void;
-  latest?: TransactionRecord;
+  latestFeed?: TransactionRecord;
+  latestHistory?: TransactionRecord;
 };
 
 const PlatformContext = createContext<PlatformContextType | null>(null);
 
-const seed: TransactionRecord[] = [
-  {
-    id: "tx-seed-1",
-    amount: 189,
-    device: "iPhone 15",
-    location: "New York",
-    merchant: "Acme Retail",
-    time: "14:20",
-    fraud: false,
-    risk: 23,
-    confidence: 77,
-    reasons: ["Pattern aligns with historical normal behavior"],
-    zScore: -0.61,
-    proofFileCount: 1,
-    createdAt: new Date(Date.now() - 3600000).toISOString(),
-  },
-  {
-    id: "tx-seed-2",
-    amount: 2240,
-    device: "Unknown Tablet",
-    location: "Moscow",
-    merchant: "Crypto Fastlane",
-    time: "03:05",
-    fraud: true,
-    risk: 86,
-    confidence: 95,
-    reasons: ["Amount anomaly detected", "Device anomaly", "Location anomaly"],
-    zScore: 14.04,
-    proofFileCount: 0,
-    createdAt: new Date(Date.now() - 1800000).toISOString(),
-  },
-];
-
 export function PlatformProvider({ children }: { children: React.ReactNode }) {
   const [isAuthenticated, setAuthenticated] = useState(false);
   const [userEmail, setUserEmail] = useState("");
-  const [transactions, setTransactions] = useState<TransactionRecord[]>(seed);
+  const [feedTransactions, setFeedTransactions] = useState<TransactionRecord[]>([]);
+  const [historyTransactions, setHistoryTransactions] = useState<TransactionRecord[]>([]);
   const [filter, setFilter] = useState<"all" | "fraud" | "safe">("all");
-  const [aiStrictness, setAiStrictness] = useState(0.6);
+  const [aiStrictness, setAiStrictness] = useState(0.5);
   const [streamState, setStreamState] = useState<PlatformContextType["streamState"]>("idle");
   const [lastStreamLatencyMs, setLastStreamLatencyMs] = useState<number | undefined>(undefined);
 
   const apiBaseUrl = process.env.NEXT_PUBLIC_FRAUD_API_BASE_URL || "http://localhost:8000";
+
+  const mapBackendTxToRecord = (backendTx: any): TransactionRecord => {
+    const createdAt = String(backendTx.timestamp || backendTx.createdAt || new Date().toISOString());
+    const created = new Date(createdAt);
+    const hh = String(created.getHours()).padStart(2, "0");
+    const mm = String(created.getMinutes()).padStart(2, "0");
+    const time = `${hh}:${mm}`;
+
+    const probability = typeof backendTx.probability === "number" ? backendTx.probability : undefined;
+    const riskScore =
+      typeof backendTx.risk_score === "number"
+        ? backendTx.risk_score
+        : typeof backendTx.risk === "number"
+          ? backendTx.risk
+          : Math.round((probability ?? 0) * 100);
+
+    const reasonCodes: string[] = Array.isArray(backendTx.reason_codes)
+      ? backendTx.reason_codes
+      : Array.isArray(backendTx.reasons)
+        ? backendTx.reasons
+        : [];
+
+    const status = backendTx.status as TransactionRecord["status"] | undefined;
+    const fraud = Boolean(backendTx.is_high_risk ?? status === "blocked");
+
+    const confidence = Math.max(50, Math.min(99, Math.round(((probability ?? riskScore / 100)) * 100)));
+
+    return {
+      id: String(backendTx.id ?? backendTx.txn_id ?? crypto.randomUUID()),
+      txnId: backendTx.txn_id ? String(backendTx.txn_id) : undefined,
+      createdAt,
+      amount: Number(backendTx.amount ?? 0),
+      location: String(backendTx.location ?? "Unknown"),
+      device: String(backendTx.device ?? "Unknown device"),
+      time,
+      merchant: String(backendTx.merchant ?? "Unknown merchant"),
+
+      fraud,
+      risk: Math.max(1, Math.min(99, Math.round(riskScore))),
+      confidence,
+      reasons: reasonCodes,
+      zScore: Number((((probability ?? 0.5) - 0.5) / 0.15).toFixed(2)),
+
+      status: status ?? (fraud ? "blocked" : "approved"),
+      probability,
+      proofFileCount: 0,
+    };
+  };
 
   useEffect(() => {
     if (!isAuthenticated) return;
     let timeout: number | undefined;
     timeout = window.setTimeout(() => {
       setStreamState("connecting");
-      setTransactions([]);
+      setFeedTransactions([]);
     }, 0);
 
     const startedAt = performance.now();
     const es = new EventSource(`${apiBaseUrl}/api/transactions/stream?strictness=${encodeURIComponent(aiStrictness)}`);
-    let mockInterval: number | undefined;
 
     es.onopen = () => {
       // no-op: we measure latency on first message
@@ -85,53 +102,8 @@ export function PlatformProvider({ children }: { children: React.ReactNode }) {
 
     es.onmessage = (event) => {
       const backendTx = JSON.parse(event.data) as any;
-
-      // Map backend transaction to our UI shape.
-      const createdAt = String(backendTx.timestamp || backendTx.createdAt || new Date().toISOString());
-      const created = new Date(createdAt);
-      const hh = String(created.getHours()).padStart(2, "0");
-      const mm = String(created.getMinutes()).padStart(2, "0");
-      const time = `${hh}:${mm}`;
-
-      const probability = typeof backendTx.probability === "number" ? backendTx.probability : undefined;
-      const riskScore =
-        typeof backendTx.risk_score === "number"
-          ? backendTx.risk_score
-          : typeof backendTx.risk === "number"
-            ? backendTx.risk
-            : Math.round((probability ?? 0) * 100);
-
-      const reasonCodes: string[] = Array.isArray(backendTx.reason_codes)
-        ? backendTx.reason_codes
-        : Array.isArray(backendTx.reasons)
-          ? backendTx.reasons
-          : [];
-
-      const status = backendTx.status as TransactionRecord["status"] | undefined;
-      const isFraud = Boolean(backendTx.is_high_risk ?? status === "blocked");
-
-      const item: TransactionRecord = {
-        id: String(backendTx.id ?? backendTx.txn_id ?? crypto.randomUUID()),
-        txnId: backendTx.txn_id ? String(backendTx.txn_id) : undefined,
-        createdAt,
-        amount: Number(backendTx.amount ?? 0),
-        location: String(backendTx.location ?? "Unknown"),
-        device: String(backendTx.device ?? "Unknown device"),
-        time,
-        merchant: String(backendTx.merchant ?? "Unknown merchant"),
-
-        fraud: isFraud,
-        risk: Math.max(1, Math.min(99, Math.round(riskScore))),
-        confidence: Math.max(50, Math.min(99, Math.round((probability ?? (riskScore / 100)) * 100))),
-        reasons: reasonCodes,
-        zScore: Number((((probability ?? 0.5) - 0.5) / 0.15).toFixed(2)),
-
-        status,
-        probability,
-        proofFileCount: 0,
-      };
-
-      setTransactions((prev) => [item, ...prev].slice(0, 250));
+      const item = mapBackendTxToRecord(backendTx);
+      setFeedTransactions((prev) => [item, ...prev].slice(0, 250));
       setStreamState("live");
       setLastStreamLatencyMs(Math.round(performance.now() - startedAt));
     };
@@ -143,86 +115,10 @@ export function PlatformProvider({ children }: { children: React.ReactNode }) {
       } catch {
         // ignore
       }
-
-      // Fallback so the hackathon demo stays interactive even if backend isn't running.
-      if (mockInterval) return;
-      setTransactions([]);
-      setStreamState("live");
-
-      const merchants = ["Acme Retail", "Northwind Grocers", "Orbit Travel", "BrightMart Electronics", "Quanta Pharmacy", "Summit Fuel"];
-      const locations = ["New York", "San Francisco", "London", "Berlin", "Toronto", "Mumbai", "Moscow", "Dubai"];
-      const devices = ["iPhone 15", "Android Pixel 8", "Samsung Galaxy S23", "MacBook Pro", "Windows Laptop"];
-      const reasonCodes = [
-        "unusual_location",
-        "velocity_check_failed",
-        "device_mismatch",
-        "device_anomaly",
-        "amount_zscore_high",
-        "merchant_risk_high",
-        "odd_transaction_time",
-        "recent_chargeback_risk",
-      ];
-
-      const tick = () => {
-        const nowDt = new Date();
-        const txId = `mock_${crypto.randomUUID()}`;
-
-        const merchant = merchants[Math.floor(Math.random() * merchants.length)];
-        const location = locations[Math.floor(Math.random() * locations.length)];
-        const device = devices[Math.floor(Math.random() * devices.length)];
-
-        let amount = Math.round((Math.random() * 2200 + 15) * 100) / 100;
-        // Outliers to make the UI exciting
-        if (Math.random() < 0.12) amount = Math.round(amount * (2.5 + Math.random() * 2) * 100) / 100;
-
-        const hour = nowDt.getHours();
-        let probability = Math.random();
-        if (amount > 900) probability = Math.min(0.99, probability + 0.25);
-        if (["Moscow", "Dubai", "Mumbai"].includes(location)) probability = Math.min(0.99, probability + 0.18);
-        if (hour < 5 || hour > 22) probability = Math.min(0.99, probability + 0.12);
-
-        const riskScore = Math.max(1, Math.min(99, Math.round(probability * 100)));
-        const isFraud = probability >= aiStrictness;
-
-        // Pick 2-4 reasons
-        const shuffled = [...reasonCodes].sort(() => Math.random() - 0.5);
-        const count = 2 + Math.floor(Math.random() * 3);
-        const picked = shuffled.slice(0, count);
-
-        const hh = String(nowDt.getHours()).padStart(2, "0");
-        const mm = String(nowDt.getMinutes()).padStart(2, "0");
-        const time = `${hh}:${mm}`;
-
-        const item: TransactionRecord = {
-          id: String(txId),
-          txnId: String(txId),
-          createdAt: nowDt.toISOString(),
-          amount,
-          location,
-          device,
-          time,
-          merchant,
-          fraud: isFraud,
-          risk: riskScore,
-          confidence: Math.max(50, Math.min(99, Math.round(probability * 100))),
-          reasons: picked,
-          zScore: Number((((probability ?? 0.5) - 0.5) / 0.15).toFixed(2)),
-          status: isFraud ? "blocked" : "approved",
-          probability,
-          proofFileCount: 0,
-        };
-
-        setTransactions((prev) => [item, ...prev].slice(0, 250));
-        setLastStreamLatencyMs(Math.round(performance.now() - startedAt));
-      };
-
-      tick();
-      mockInterval = window.setInterval(tick, 1200);
     };
 
     return () => {
       if (timeout) window.clearTimeout(timeout);
-      if (mockInterval) window.clearInterval(mockInterval);
       es.close();
     };
   }, [aiStrictness, isAuthenticated, apiBaseUrl]);
@@ -237,8 +133,10 @@ export function PlatformProvider({ children }: { children: React.ReactNode }) {
   const logout = () => {
     setAuthenticated(false);
     setUserEmail("");
-    setTransactions([]);
+    setFeedTransactions([]);
+    setHistoryTransactions([]);
     setStreamState("idle");
+    setLastStreamLatencyMs(undefined);
   };
 
   const analyze = async (payload: AnalyzePayload) => {
@@ -258,28 +156,106 @@ export function PlatformProvider({ children }: { children: React.ReactNode }) {
       id: crypto.randomUUID(),
       createdAt: new Date().toISOString(),
       proofFileCount: proofs?.length ?? 0,
+      txnId: rest.userId ? String(rest.userId) : undefined,
+      status: result.fraud ? "blocked" : "approved",
     };
-    setTransactions((prev) => [item, ...prev].slice(0, 100));
+    setHistoryTransactions((prev) => [item, ...prev].slice(0, 200));
     return item;
   };
 
-  const ingestStreamTransaction = (t: TransactionRecord) => {
-    setTransactions((prev) => [t, ...prev].slice(0, 200));
+  const stableHash = (s: string) => {
+    let h = 2166136261;
+    for (let i = 0; i < s.length; i++) {
+      h ^= s.charCodeAt(i);
+      h = Math.imul(h, 16777619);
+    }
+    return Math.abs(h);
+  };
+
+  const submitManualTransaction = async (input: ManualTransactionInput) => {
+    const payload = {
+      ...input,
+      strictness: aiStrictness,
+    };
+
+    try {
+      const res = await fetch(`${apiBaseUrl}/api/transactions/submit`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) throw new Error("Backend submit failed");
+      const backendTx = (await res.json()) as any;
+      const item = mapBackendTxToRecord(backendTx);
+      setHistoryTransactions((prev) => [item, ...prev].slice(0, 200));
+      return item;
+    } catch {
+      const seed = stableHash(`${input.merchant}|${input.amount}|${input.location}|${input.device}|${input.timestamp ?? ""}`);
+      const prob = ((seed % 10000) / 10000) * 0.7 + 0.15;
+      const probability = Math.max(0, Math.min(0.99, prob));
+      const riskScore = Math.max(1, Math.min(99, Math.round(probability * 100)));
+      const isHigh = probability >= aiStrictness;
+
+      const codes = [
+        "unusual_location",
+        "velocity_check_failed",
+        "device_mismatch",
+        "device_anomaly",
+        "amount_zscore_high",
+        "merchant_risk_high",
+        "odd_transaction_time",
+        "recent_chargeback_risk",
+      ];
+      const picked = codes.sort((a, b) => stableHash(a + seed) - stableHash(b + seed)).slice(0, 3);
+
+      const createdAt = input.timestamp ? new Date(input.timestamp).toISOString() : new Date().toISOString();
+      const created = new Date(createdAt);
+      const hh = String(created.getHours()).padStart(2, "0");
+      const mm = String(created.getMinutes()).padStart(2, "0");
+      const time = `${hh}:${mm}`;
+
+      const item: TransactionRecord = {
+        id: crypto.randomUUID(),
+        txnId: `manual_${crypto.randomUUID()}`,
+        createdAt,
+        amount: input.amount,
+        location: input.location,
+        device: input.device,
+        time,
+        merchant: input.merchant,
+        fraud: isHigh,
+        risk: riskScore,
+        confidence: Math.max(50, Math.min(99, Math.round(probability * 100))),
+        reasons: picked,
+        zScore: Number((((probability ?? 0.5) - 0.5) / 0.15).toFixed(2)),
+        status: isHigh ? "blocked" : "approved",
+        probability,
+        proofFileCount: 0,
+      };
+
+      setHistoryTransactions((prev) => [item, ...prev].slice(0, 200));
+      return item;
+    }
   };
 
   const updateTransactionStatus = (txId: string, status: TransactionRecord["status"]) => {
-    setTransactions((prev) =>
-      prev.map((t) => {
-        if (t.id === txId || t.txnId === txId) return { ...t, status };
-        return t;
-      }),
-    );
+    const apply = (arr: TransactionRecord[]) =>
+      arr.map((t) => {
+        const match = t.id === txId || t.txnId === txId;
+        if (!match) return t;
+        const fraud = status === "blocked";
+        return { ...t, status, fraud };
+      });
+
+    setFeedTransactions((prev) => apply(prev));
+    setHistoryTransactions((prev) => apply(prev));
   };
 
   const value = {
     isAuthenticated,
     userEmail,
-    transactions,
+    feedTransactions,
+    historyTransactions,
     aiStrictness,
     setAiStrictness,
     streamState,
@@ -287,11 +263,12 @@ export function PlatformProvider({ children }: { children: React.ReactNode }) {
     login,
     logout,
     analyze,
-    ingestStreamTransaction,
+    submitManualTransaction,
     updateTransactionStatus,
     filter,
     setFilter,
-    latest: transactions[0],
+    latestFeed: feedTransactions[0],
+    latestHistory: historyTransactions[0],
   };
 
   return <PlatformContext.Provider value={value}>{children}</PlatformContext.Provider>;

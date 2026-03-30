@@ -49,3 +49,11 @@ export type TransactionRecord = Omit<AnalyzePayload, "proofs" | "ocrText"> &
     probability?: number;
     status?: "pending" | "blocked" | "approved" | "proof_requested";
   };
+
+export type ManualTransactionInput = {
+  merchant: string;
+  amount: number;
+  location: string;
+  device: string;
+  timestamp?: string;
+};

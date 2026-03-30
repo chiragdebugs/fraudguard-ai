@@ -17,11 +17,11 @@ import {
 import { usePlatform } from "@/components/platform-provider";
 
 export default function AnalyticsPage() {
-  const { transactions } = usePlatform();
-  const trend = [...transactions].reverse().slice(-12).map((t, i) => ({ name: `T${i + 1}`, risk: t.risk }));
+  const { historyTransactions } = usePlatform();
+  const trend = [...historyTransactions].reverse().slice(-12).map((t, i) => ({ name: `T${i + 1}`, risk: t.risk }));
   const grouped = [
-    { label: "Fraud", value: transactions.filter((t) => t.fraud).length },
-    { label: "Safe", value: transactions.filter((t) => !t.fraud).length },
+    { label: "Fraud", value: historyTransactions.filter((t) => t.fraud).length },
+    { label: "Safe", value: historyTransactions.filter((t) => !t.fraud).length },
   ];
 
   return (

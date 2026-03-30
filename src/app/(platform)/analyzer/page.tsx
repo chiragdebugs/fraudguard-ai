@@ -19,11 +19,11 @@ export default function AnalyzerPage() {
   const [dragOver, setDragOver] = useState(false);
   const [ocrStatus, setOcrStatus] = useState<string>("");
   const [form, setForm] = useState({
-    amount: "240",
-    location: "New York",
-    device: "iPhone 15",
-    time: "12:45",
-    merchant: "Acme Retail",
+    amount: "",
+    location: "",
+    device: "",
+    time: "",
+    merchant: "",
   });
 
   const addFiles = useCallback((incoming: FileList | File[]) => {
@@ -115,7 +115,14 @@ export default function AnalyzerPage() {
           </div>
 
           <Button
-            disabled={loading}
+            disabled={
+              loading ||
+              !form.amount ||
+              Number.isNaN(Number(form.amount)) ||
+              !form.location ||
+              !form.device ||
+              !form.time
+            }
             onClick={async () => {
               setLoading(true);
               try {

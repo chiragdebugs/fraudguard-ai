@@ -4,13 +4,13 @@ import { useMemo } from "react";
 import { usePlatform } from "@/components/platform-provider";
 
 export default function HistoryPage() {
-  const { transactions, filter, setFilter } = usePlatform();
+  const { historyTransactions, filter, setFilter } = usePlatform();
 
   const filtered = useMemo(() => {
-    if (filter === "fraud") return transactions.filter((t) => t.fraud);
-    if (filter === "safe") return transactions.filter((t) => !t.fraud);
-    return transactions;
-  }, [transactions, filter]);
+    if (filter === "fraud") return historyTransactions.filter((t) => t.fraud);
+    if (filter === "safe") return historyTransactions.filter((t) => !t.fraud);
+    return historyTransactions;
+  }, [historyTransactions, filter]);
 
   return (
     <div className="glass rounded-2xl p-4">
@@ -34,25 +34,27 @@ export default function HistoryPage() {
         <table className="w-full text-left text-sm">
           <thead className="bg-slate-900/80 text-slate-300">
             <tr>
-              <th className="p-3">Amount</th>
-              <th className="p-3">Location</th>
-              <th className="p-3">Device</th>
-              <th className="p-3">Proofs</th>
-              <th className="p-3">Risk</th>
-              <th className="p-3">Status</th>
+                  <th className="p-3">Txn ID</th>
+                  <th className="p-3">Timestamp</th>
+                  <th className="p-3">Merchant</th>
+                  <th className="p-3">Amount</th>
+                  <th className="p-3">Location</th>
+                  <th className="p-3">Risk</th>
+                  <th className="p-3">Status</th>
             </tr>
           </thead>
           <tbody>
             {filtered.map((t) => (
-              <tr key={t.id} className={t.fraud ? "bg-red-500/5" : "bg-emerald-500/5"}>
-                <td className="p-3">${t.amount}</td>
-                <td className="p-3">{t.location}</td>
-                <td className="p-3">{t.device}</td>
-                <td className="p-3">{t.proofFileCount ?? 0}</td>
-                <td className="p-3">{t.risk}</td>
-                <td className={`p-3 ${t.fraud ? "text-red-300" : "text-emerald-300"}`}>
-                  {t.fraud ? "Fraud" : "Safe"}
-                </td>
+                  <tr key={t.id} className={t.fraud ? "bg-red-500/5" : "bg-emerald-500/5"}>
+                    <td className="p-3 font-medium text-slate-200">{t.txnId ?? t.id.slice(0, 10)}</td>
+                    <td className="p-3 text-xs text-slate-300">{new Date(t.createdAt).toLocaleString()}</td>
+                    <td className="p-3 text-slate-200">{t.merchant}</td>
+                    <td className="p-3 font-semibold">${t.amount.toFixed(2)}</td>
+                    <td className="p-3 text-slate-300">{t.location}</td>
+                    <td className="p-3">{t.risk}</td>
+                    <td className={`p-3 ${t.status === "blocked" ? "text-red-300" : "text-emerald-300"}`}>
+                      {t.status ?? (t.fraud ? "blocked" : "approved")}
+                    </td>
               </tr>
             ))}
           </tbody>

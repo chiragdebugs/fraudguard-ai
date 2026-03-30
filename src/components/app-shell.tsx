@@ -9,14 +9,15 @@ import { usePlatform } from "@/components/platform-provider";
 
 const nav = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { href: "/history", label: "History", icon: ShieldAlert },
   { href: "/settings", label: "Rule Engine", icon: SlidersHorizontal },
 ];
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const path = usePathname();
-  const { userEmail, logout, transactions } = usePlatform();
+  const { userEmail, logout, feedTransactions } = usePlatform();
   const router = useRouter();
-  const alertCount = transactions.filter((t) => t.fraud).length;
+  const alertCount = feedTransactions.filter((t) => t.fraud).length;
 
   return (
     <div className="min-h-screen p-4 md:p-6">

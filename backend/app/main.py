@@ -234,6 +234,96 @@ async def model_predict(payload: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _predict_from_input(seed_key: str, amount: float, location: str, device: str, timestamp: str) -> Dict[str, Any]:
+    rng = _stable_rng(seed_key)
+
+    hour = 12
+    try:
+        ts = str(timestamp or "")
+        if "T" in ts:
+            hour = datetime.fromisoformat(ts.replace("Z", "+00:00")).astimezone(timezone.utc).hour
+        elif ":" in ts:
+            hour = int(ts.split(":")[0])
+    except Exception:
+        hour = 12
+
+    prob = rng.random()
+    if amount > 900:
+        prob = min(0.98, prob + 0.25)
+    if location in ["Moscow", "Dubai", "Mumbai"]:
+        prob = min(0.99, prob + 0.18)
+    if hour < 5 or hour > 22:
+        prob = min(0.99, prob + 0.12)
+    if "Windows" in device:
+        prob = min(0.99, prob + 0.05)
+
+    prob = round(float(prob), 4)
+    risk_score = int(round(prob * 100))
+
+    reason_count = 2 + int(rng.random() * 3)
+    rng.shuffle(REASON_POOL)
+    reason_codes = REASON_POOL[:reason_count]
+    return {
+        "probability": prob,
+        "risk_score": risk_score,
+        "reason_codes": reason_codes,
+    }
+
+
+@app.post("/api/transactions/submit")
+async def transactions_submit(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Accept user-provided transaction fields and return a risk-scored decision.
+    This endpoint is the backbone for a "no fake history" hackathon flow:
+    only user submissions are persisted into recent_transactions for OCR matching.
+    """
+    merchant = str(payload.get("merchant") or "Unknown merchant")
+    location = str(payload.get("location") or "Unknown")
+    device = str(payload.get("device") or "Unknown device")
+    amount = float(payload.get("amount") or 0)
+    strictness = float(payload.get("strictness") if payload.get("strictness") is not None else 0.6)
+    strictness = max(0.0, min(1.0, strictness))
+
+    timestamp_raw = payload.get("timestamp") or _utc_now().isoformat()
+    timestamp_dt: datetime
+    try:
+        timestamp_dt = datetime.fromisoformat(str(timestamp_raw).replace("Z", "+00:00")).astimezone(timezone.utc)
+    except Exception:
+        timestamp_dt = _utc_now()
+
+    seed_key = f"{merchant}|{location}|{device}|{amount}|{timestamp_dt.isoformat()}"
+    pred = _predict_from_input(seed_key, amount, location, device, timestamp_dt.isoformat())
+
+    probability = float(pred["probability"])
+    is_high_risk = probability >= strictness
+    risk_score = int(pred["risk_score"])
+    reason_codes: List[str] = list(pred["reason_codes"])
+
+    txn_id = f"txn_{abs(hash(seed_key)) % 100000000}"
+    status = "blocked" if is_high_risk else "approved"
+
+    txn = Transaction(
+        id=hashlib.md5(txn_id.encode("utf-8")).hexdigest(),
+        timestamp=_to_iso(timestamp_dt),
+        txn_id=txn_id,
+        merchant=merchant,
+        amount=round(amount, 2),
+        location=location,
+        device=device,
+        probability=probability,
+        risk_score=risk_score,
+        reason_codes=reason_codes,
+        is_high_risk=is_high_risk,
+        status=status,
+    )
+
+    recent_transactions.append(asdict(txn))
+    if len(recent_transactions) > MAX_RECENT:
+        del recent_transactions[: len(recent_transactions) - MAX_RECENT]
+
+    return asdict(txn)
+
+
 @app.post("/api/ocr/extract")
 async def ocr_extract(
     file: UploadFile = File(...),

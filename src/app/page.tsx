@@ -12,8 +12,8 @@ import { Switch } from "@/components/ui/switch";
 export default function LoginPage() {
   const { login } = usePlatform();
   const router = useRouter();
-  const [email, setEmail] = useState("founder@neobank.ai");
-  const [password, setPassword] = useState("secure123");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [remember, setRemember] = useState(true);
 

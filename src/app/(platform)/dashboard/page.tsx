@@ -8,7 +8,6 @@ import {
   Cpu,
   Clock,
   Activity,
-  Search,
   CornerDownLeft,
 } from "lucide-react";
 import {
@@ -24,6 +23,8 @@ import { usePlatform } from "@/components/platform-provider";
 import { Badge } from "@/components/ui/badge";
 import { InvestigationDialog } from "@/components/investigation-dialog";
 import { DisputeDialog } from "@/components/dispute-dialog";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { TransactionRecord } from "@/types";
 
@@ -34,7 +35,14 @@ function riskBadgeVariant(risk: number) {
 }
 
 export default function DashboardPage() {
-  const { transactions, streamState, lastStreamLatencyMs, aiStrictness } = usePlatform();
+  const {
+    feedTransactions,
+    historyTransactions,
+    submitManualTransaction,
+    streamState,
+    lastStreamLatencyMs,
+    aiStrictness,
+  } = usePlatform();
   const [selectedTx, setSelectedTx] = useState<TransactionRecord | null>(null);
   const [investOpen, setInvestOpen] = useState(false);
   const [disputeOpen, setDisputeOpen] = useState(false);
@@ -45,13 +53,26 @@ export default function DashboardPage() {
     return () => window.clearInterval(t);
   }, []);
 
+  const combined = useMemo(() => {
+    const all = [...feedTransactions, ...historyTransactions];
+    return all.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  }, [feedTransactions, historyTransactions]);
+
+  const [merchant, setMerchant] = useState("");
+  const [amount, setAmount] = useState("");
+  const [location, setLocation] = useState("");
+  const [device, setDevice] = useState("");
+  const [timestampLocal, setTimestampLocal] = useState("");
+  const [submitError, setSubmitError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
   const last24 = useMemo(() => {
     const cutoff = now - 24 * 60 * 60 * 1000;
-    return transactions.filter((t) => {
+    return combined.filter((t) => {
       const dt = new Date(t.createdAt).getTime();
       return Number.isFinite(dt) && dt >= cutoff;
     });
-  }, [transactions, now]);
+  }, [combined, now]);
 
   const kpis = useMemo(() => {
     const total = last24.length;
@@ -97,10 +118,7 @@ export default function DashboardPage() {
     setInvestOpen(true);
   };
 
-  const highRiskCount = useMemo(
-    () => transactions.filter((t) => t.fraud || t.status === "blocked").length,
-    [transactions],
-  );
+  const highRiskCount = useMemo(() => combined.filter((t) => t.fraud || t.status === "blocked").length, [combined]);
 
   return (
     <div className="space-y-4">
@@ -134,6 +152,102 @@ export default function DashboardPage() {
           </div>
         </div>
       </motion.section>
+
+      <section className="grid gap-4 lg:grid-cols-[1.1fr_0.9fr]">
+        <div className="glass rounded-2xl p-5">
+          <p className="mb-1 text-sm font-semibold text-slate-200">Add transaction to your History</p>
+          <p className="mb-4 text-xs text-slate-400">
+            No prefilled inputs. Whatever you type here will appear in History.
+          </p>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div>
+              <label className="mb-1 block text-xs uppercase tracking-wide text-slate-500">Merchant</label>
+              <Input value={merchant} onChange={(e) => setMerchant(e.target.value)} placeholder="e.g. Acme Retail" />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs uppercase tracking-wide text-slate-500">Amount</label>
+              <Input
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+                placeholder="e.g. 240.50"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs uppercase tracking-wide text-slate-500">Location</label>
+              <Input value={location} onChange={(e) => setLocation(e.target.value)} placeholder="e.g. New York" />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs uppercase tracking-wide text-slate-500">Device</label>
+              <Input value={device} onChange={(e) => setDevice(e.target.value)} placeholder="e.g. iPhone 15" />
+            </div>
+          </div>
+          <div className="mt-3">
+            <label className="mb-1 block text-xs uppercase tracking-wide text-slate-500">Timestamp (optional)</label>
+            <Input type="datetime-local" value={timestampLocal} onChange={(e) => setTimestampLocal(e.target.value)} />
+          </div>
+          {submitError && <p className="mt-3 text-xs text-red-300">{submitError}</p>}
+          <div className="mt-4">
+            <Button
+              disabled={submitting || !merchant || !amount || !location || !device || Number.isNaN(Number(amount))}
+              onClick={async () => {
+                setSubmitError("");
+                setSubmitting(true);
+                try {
+                  const iso = timestampLocal ? new Date(timestampLocal).toISOString() : undefined;
+                  const out = await submitManualTransaction({
+                    merchant: merchant.trim(),
+                    amount: Number(amount),
+                    location: location.trim(),
+                    device: device.trim(),
+                    timestamp: iso,
+                  });
+
+                  // Auto-open investigation if blocked/high risk
+                  if (out.fraud || out.status === "blocked") {
+                    setSelectedTx(out);
+                    setInvestOpen(true);
+                  }
+
+                  setMerchant("");
+                  setAmount("");
+                  setLocation("");
+                  setDevice("");
+                  setTimestampLocal("");
+                } catch (e: any) {
+                  setSubmitError(e?.message ?? "Failed to submit transaction.");
+                } finally {
+                  setSubmitting(false);
+                }
+              }}
+              className="w-full gap-2"
+            >
+              {submitting ? <CornerDownLeft className="h-4 w-4 animate-spin" /> : <CornerDownLeft className="h-4 w-4" />}
+              Add to History
+            </Button>
+          </div>
+        </div>
+
+        <div className="glass rounded-2xl p-5">
+          <p className="mb-2 text-sm font-semibold text-slate-200">System status</p>
+          <div className="space-y-2 text-sm text-slate-300">
+            <div className="flex items-center justify-between">
+              <span className="text-slate-400">Stream</span>
+              <span className="font-semibold text-slate-100">{streamState}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-slate-400">Last latency</span>
+              <span className="font-semibold text-slate-100">
+                {typeof lastStreamLatencyMs === "number" ? `~${lastStreamLatencyMs}ms` : "—"}
+              </span>
+            </div>
+            <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+              <p className="text-xs text-slate-400">Strictness threshold</p>
+              <p className="mt-1 text-2xl font-semibold">{aiStrictness.toFixed(2)}</p>
+              <p className="mt-1 text-xs text-slate-500">Used for blocking decisions.</p>
+            </div>
+          </div>
+        </div>
+      </section>
 
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <div className="glass rounded-2xl p-4">
@@ -220,7 +334,7 @@ export default function DashboardPage() {
                 </tr>
               </thead>
               <tbody>
-                {transactions.slice(0, 60).map((tx) => {
+                {combined.slice(0, 60).map((tx) => {
                   const riskVariant = riskBadgeVariant(tx.risk);
                   const badgeText = tx.fraud || tx.status === "blocked" ? "High Risk" : "Safe";
                   return (
@@ -245,10 +359,10 @@ export default function DashboardPage() {
                     </tr>
                   );
                 })}
-                {transactions.length === 0 && (
+                {combined.length === 0 && (
                   <tr>
                     <td colSpan={6} className="p-6 text-sm text-slate-500">
-                      Waiting for live stream…
+                      No transactions yet. Add one to History (left) or wait for the live feed.
                     </td>
                   </tr>
                 )}
