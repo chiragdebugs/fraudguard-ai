@@ -23,6 +23,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.get("/health")
+async def health() -> Dict[str, Any]:
+    return {"ok": True}
+
 
 @dataclass
 class Transaction:
