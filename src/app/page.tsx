@@ -7,6 +7,7 @@ import { LockKeyhole, ShieldCheck } from "lucide-react";
 import { usePlatform } from "@/components/platform-provider";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 
 export default function LoginPage() {
   const { login } = usePlatform();
@@ -14,6 +15,7 @@ export default function LoginPage() {
   const [email, setEmail] = useState("founder@neobank.ai");
   const [password, setPassword] = useState("secure123");
   const [error, setError] = useState("");
+  const [remember, setRemember] = useState(true);
 
   return (
     <div className="flex min-h-screen items-center justify-center px-4">
@@ -43,6 +45,15 @@ export default function LoginPage() {
             onChange={(e) => setPassword(e.target.value)}
             placeholder="Password"
           />
+
+          <div className="flex items-center justify-between rounded-xl border border-white/10 bg-black/15 px-3 py-2">
+            <div className="text-sm">
+              <p className="font-medium">Remember Me</p>
+              <p className="text-xs text-slate-400">Keep your session for this demo.</p>
+            </div>
+            <Switch checked={remember} onCheckedChange={setRemember} />
+          </div>
+
           {error && <p className="text-xs text-red-300">{error}</p>}
           <Button
             onClick={() => {
@@ -53,7 +64,7 @@ export default function LoginPage() {
             className="w-full gap-2 shadow-lg shadow-indigo-900/40"
           >
             <LockKeyhole className="h-4 w-4" />
-            Login to Platform
+            Sign In
           </Button>
         </div>
       </motion.div>

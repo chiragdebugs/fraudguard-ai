@@ -2,16 +2,14 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { BarChart3, Bell, History, LayoutDashboard, LogOut, Search, ShieldAlert } from "lucide-react";
+import { Bell, LayoutDashboard, LogOut, SlidersHorizontal, ShieldAlert, Search } from "lucide-react";
 import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
 import { usePlatform } from "@/components/platform-provider";
 
 const nav = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/analyzer", label: "Analyzer", icon: ShieldAlert },
-  { href: "/analytics", label: "Analytics", icon: BarChart3 },
-  { href: "/history", label: "History", icon: History },
+  { href: "/settings", label: "Rule Engine", icon: SlidersHorizontal },
 ];
 
 export function AppShell({ children }: { children: React.ReactNode }) {

@@ -45,4 +45,7 @@ export type TransactionRecord = Omit<AnalyzePayload, "proofs" | "ocrText"> &
     id: string;
     createdAt: string;
     proofFileCount?: number;
+    txnId?: string;
+    probability?: number;
+    status?: "pending" | "blocked" | "approved" | "proof_requested";
   };
